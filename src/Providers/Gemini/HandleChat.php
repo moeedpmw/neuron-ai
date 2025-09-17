@@ -6,6 +6,9 @@ namespace NeuronAI\Providers\Gemini;
 
 use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\RequestOptions;
+use NeuronAI\Chat\Attachments\Attachment;
+use NeuronAI\Chat\Enums\AttachmentContentType;
+use NeuronAI\Chat\Enums\AttachmentType;
 use NeuronAI\Chat\Enums\MessageRole;
 use NeuronAI\Chat\Messages\Message;
 use NeuronAI\Chat\Messages\Usage;
@@ -53,6 +56,13 @@ trait HandleChat
                     $response = $this->createToolCallMessage($content);
                 } else {
                     $response = new Message(MessageRole::from($content['role']), $parts[0]['text'] ?? '');
+                }
+
+                foreach ($parts as $part) {
+                    if (\array_key_exists('inlineData', $part) && !empty($part['inlineData'])) {
+                        $attachment = new Attachment(AttachmentType::IMAGE, $part['inlineData']['data'], AttachmentContentType::BASE64);
+                        $response->addAttachment($attachment);
+                    }
                 }
 
                 if (\array_key_exists('groundingMetadata', $result['candidates'][0])) {
