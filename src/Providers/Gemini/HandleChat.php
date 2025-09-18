@@ -60,7 +60,7 @@ trait HandleChat
 
                 foreach ($parts as $part) {
                     if (\array_key_exists('inlineData', $part) && !empty($part['inlineData'])) {
-                        $attachment = new Attachment(AttachmentType::IMAGE, $part['inlineData']['data'], AttachmentContentType::BASE64);
+                        $attachment = new Attachment(AttachmentType::IMAGE, $part['inlineData']['data'], AttachmentContentType::BASE64, $part['inlineData']['mimeType'] ?? 'image/png');
                         $response->addAttachment($attachment);
                     }
                 }
