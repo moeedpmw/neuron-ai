@@ -7,12 +7,13 @@ namespace NeuronAI\MCP;
 use GuzzleHttp\Client;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Psr7\Request;
+use Psr\Http\Message\ResponseInterface;
 
 class StreamableHttpTransport implements McpTransportInterface
 {
     protected readonly Client $httpClient;
     protected ?string $sessionId = null;
-    protected mixed $lastResponse = null;
+    protected ?ResponseInterface $lastResponse = null;
 
     /**
      * Create a new StreamableHttpTransport with the given configuration
@@ -70,7 +71,7 @@ class StreamableHttpTransport implements McpTransportInterface
 
             // Add session ID if available
             if ($this->sessionId !== null) {
-                $headers['X-Session-ID'] = $this->sessionId;
+                $headers['Mcp-Session-Id'] = $this->sessionId;
             }
 
             $jsonData = \json_encode($data, \JSON_THROW_ON_ERROR);
@@ -87,8 +88,8 @@ class StreamableHttpTransport implements McpTransportInterface
             }
 
             // Extract session ID from response headers if present
-            if ($response->hasHeader('X-Session-ID')) {
-                $this->sessionId = $response->getHeader('X-Session-ID')[0];
+            if ($response->hasHeader('Mcp-Session-Id')) {
+                $this->sessionId = $response->getHeader('Mcp-Session-Id')[0];
             }
 
             // Store the response for the receive() method
@@ -109,22 +110,26 @@ class StreamableHttpTransport implements McpTransportInterface
      */
     public function receive(): array
     {
-        if ($this->lastResponse === null) {
+        if (!$this->lastResponse instanceof ResponseInterface) {
             throw new McpException('No response available. Call send() first.');
         }
 
         try {
-            $responseBody = $this->lastResponse->getBody()->getContents();
+            $response = $this->lastResponse->getBody()->getContents();
             $this->lastResponse = null; // Clear the stored response
 
-            if ($responseBody === '') {
+            if ($response === '') {
                 throw new McpException('Empty response body');
             }
 
-            // Parse SSE format to extract JSON data
-            $jsonData = $this->parseSSEResponse($responseBody);
-
-            return \json_decode($jsonData, true, 512, \JSON_THROW_ON_ERROR);
+            try {
+                return \json_decode($response, true, 512, \JSON_THROW_ON_ERROR);
+            } catch (\JsonException $e) {
+                // If the response from the server is not a valid JSON
+                // try to parse the SSE format to extract JSON data
+                $json = $this->parseSSEResponse($response);
+                return \json_decode($json, true, 512, \JSON_THROW_ON_ERROR);
+            }
 
         } catch (\JsonException $e) {
             throw new McpException('Invalid JSON response: ' . $e->getMessage());
@@ -148,16 +153,11 @@ class StreamableHttpTransport implements McpTransportInterface
      */
     protected function getAuthHeaders(): array
     {
-        $headers = [];
+        $headers = $this->config['headers'] ?? [];
 
         // Add Bearer token if provided
         if (isset($this->config['token'])) {
             $headers['Authorization'] = 'Bearer ' . $this->config['token'];
-        }
-
-        // Add Origin header for security
-        if (isset($this->config['origin'])) {
-            $headers['Origin'] = $this->config['origin'];
         }
 
         return $headers;

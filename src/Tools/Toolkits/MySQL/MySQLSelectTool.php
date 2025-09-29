@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace NeuronAI\Tools\Toolkits\MySQL;
 
+use NeuronAI\Exceptions\ArrayPropertyException;
+use NeuronAI\Exceptions\ToolException;
+use NeuronAI\Tools\ArrayProperty;
+use NeuronAI\Tools\ObjectProperty;
 use NeuronAI\Tools\PropertyType;
 use NeuronAI\Tools\Tool;
 use NeuronAI\Tools\ToolProperty;
@@ -24,34 +28,61 @@ class MySQLSelectTool extends Tool
     public function __construct(protected PDO $pdo)
     {
         parent::__construct(
-            'execute_select_query',
+            'mysql_select_query',
             'Use this tool only to run SELECT query against the MySQL database.
 This the tool to use only to gather information from the MySQL database.'
         );
     }
 
+    /**
+     * @throws \ReflectionException
+     * @throws ArrayPropertyException
+     * @throws ToolException
+     */
     protected function properties(): array
     {
         return [
             new ToolProperty(
-                'query',
-                PropertyType::STRING,
-                'The SELECT query you want to run against the database.',
-                true
-            )
+                name: 'query',
+                type: PropertyType::STRING,
+                description: 'The parameterized SELECT query with named placeholders (e.g., "SELECT name, email FROM users WHERE name = :name". Use named parameters (:parameter_name) for all dynamic values.',
+                required: true
+            ),
+            new ArrayProperty(
+                name: 'parameters',
+                description: 'Key-value pairs for parameter binding where keys match the named placeholders in the query (without the colon). Example: {"name": "John Doe", "email": "%john%", "id": 123}. Ignore if no parameters are needed.',
+                required: false,
+                items: new ObjectProperty(
+                    name: 'parameter',
+                    properties: [
+                        new ToolProperty('name', PropertyType::STRING, 'Parameter name', true),
+                        new ToolProperty('value', PropertyType::STRING, 'Parameter value', true),
+                    ]
+                )
+            ),
         ];
     }
 
-    public function __invoke(string $query): string|array
+    /**
+     * @param array<array{name: string, value: string}> $parameters
+     */
+    public function __invoke(string $query, array $parameters = []): string|array
     {
         if (!$this->validateReadOnly($query)) {
             return "The query was rejected for security reasons.
             It looks like you are trying to run a write query using the read-only query tool.";
         }
 
-        $stmt = $this->pdo->prepare($query);
-        $stmt->execute();
-        return $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $statement = $this->pdo->prepare($query);
+
+        // Bind parameters if provided
+        foreach ($parameters as $parameter) {
+            $paramName = \str_starts_with((string) $parameter['name'], ':') ? $parameter['name'] : ':' . $parameter['name'];
+            $statement->bindValue($paramName, $parameter['value']);
+        }
+
+        $statement->execute();
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
 
     protected function validateReadOnly(string $query): bool

@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace NeuronAI\Tools\Toolkits\PGSQL;
 
 use InvalidArgumentException;
+use NeuronAI\Exceptions\ArrayPropertyException;
+use NeuronAI\Exceptions\ToolException;
+use NeuronAI\Tools\ArrayProperty;
+use NeuronAI\Tools\ObjectProperty;
 use NeuronAI\Tools\PropertyType;
 use NeuronAI\Tools\Tool;
 use NeuronAI\Tools\ToolProperty;
@@ -42,25 +46,45 @@ class PGSQLSelectTool extends Tool
     public function __construct(protected PDO $pdo)
     {
         parent::__construct(
-            'execute_select_query',
+            'pgsql_select_query',
             'Use this tool only to run SELECT query against the PostgreSQL database.
 This the tool to use only to gather information from the PostgreSQL database.'
         );
     }
 
+    /**
+     * @throws \ReflectionException
+     * @throws ArrayPropertyException
+     * @throws ToolException
+     */
     protected function properties(): array
     {
         return [
             new ToolProperty(
                 'query',
                 PropertyType::STRING,
-                'The SELECT query you want to run against the database.',
+                'The parameterized SELECT query with named placeholders (e.g., "SELECT name, email FROM users WHERE name = :name. Use named parameters (:parameter_name) for all dynamic values.',
                 true
-            )
+            ),
+            new ArrayProperty(
+                'parameters',
+                'Key-value pairs for parameter binding where keys match the named placeholders in the query (without the colon). Example: {"name": "John Doe", "email": "%john%", "id": 123}. Leave empty if no parameters are needed.',
+                false,
+                items: new ObjectProperty(
+                    name: 'parameter',
+                    properties: [
+                        new ToolProperty('name', PropertyType::STRING, 'Parameter name', true),
+                        new ToolProperty('value', PropertyType::STRING, 'Parameter value', true),
+                    ]
+                )
+            ),
         ];
     }
 
-    public function __invoke(string $query): array
+    /**
+     * @param array<array{name: string, value: string}> $parameters
+     */
+    public function __invoke(string $query, array $parameters = []): array
     {
         if (!$this->validateReadOnlyQuery($query)) {
             return [
@@ -70,6 +94,13 @@ It looks like you are trying to run a write query using the read-only query tool
         }
 
         $statement = $this->pdo->prepare($query);
+
+        // Bind parameters if provided
+        foreach ($parameters as $parameter) {
+            $paramName = \str_starts_with((string) $parameter['name'], ':') ? $parameter['name'] : ':' . $parameter['name'];
+            $statement->bindValue($paramName, $parameter['value']);
+        }
+
         $statement->execute();
 
         return $statement->fetchAll(PDO::FETCH_ASSOC);
@@ -89,7 +120,7 @@ It looks like you are trying to run a write query using the read-only query tool
         // Remove comments to avoid false positives
         $cleanQuery = $this->removeComments($query);
 
-        // Check if query starts with an allowed read operation
+        // Check if the query starts with an allowed read operation
         $isAllowed = false;
         foreach ($this->allowedPatterns as $pattern) {
             if (\preg_match($pattern, $cleanQuery)) {
