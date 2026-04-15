@@ -59,6 +59,12 @@ trait HandleChat
      */
     protected function processChatResult(array $result): AssistantMessage
     {
+        $candidate = $result['candidates'][0] ?? null;
+        log_info('[Gemini processChatResult] finishReason: ' . ($candidate['finishReason'] ?? 'N/A')
+            . ', finishMessage: ' . ($candidate['finishMessage'] ?? 'N/A')
+            . ', hasParts: ' . (isset($candidate['content']['parts']) ? 'yes (' . count($candidate['content']['parts']) . ')' : 'no')
+            . ', modelVersion: ' . ($result['modelVersion'] ?? 'N/A'));
+
         if (array_key_exists('error', $result)) {
             throw new ProviderException("Gemini API Error: " . ($result['error']['message'] ?? json_encode($result['error'])));
         }
@@ -76,8 +82,12 @@ trait HandleChat
 
         $content = $candidate['content'];
 
-        if (!isset($content['parts']) && $finishReason === 'MAX_TOKENS') {
-            return (new AssistantMessage())->setStopReason($finishReason);
+        if (!isset($content['parts']) || empty($content['parts'])) {
+            if ($finishReason === 'MAX_TOKENS') {
+                return (new AssistantMessage())->setStopReason($finishReason);
+            }
+
+            throw new ProviderException("Gemini API returned no content parts. Finish reason: {$finishReason}. Full response: " . json_encode($result));
         }
 
         $blocks = [];
